@@ -1,0 +1,46 @@
+name: backend
+
+on:
+  push:
+    branches: [master, main]
+    paths: ["backend/**", "ai/**", ".github/workflows/backend.yml"]
+  pull_request:
+    paths: ["backend/**", "ai/**", ".github/workflows/backend.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        run: pip install ".[dev]"
+      - name: Lint (ruff: backend + top-level ai package)
+        run: ruff check . ../ai
+      - name: Tests (pytest)
+        env:
+          # tests/conftest.py pins SENTINEL_* itself; these keep the run
+          # deterministic and independent of the runner's environment.
+          SENTINEL_APP_ENV: test
+          SENTINEL_AUTH_SECRET: ci-test-secret
+          SENTINEL_DATABASE_URL: sqlite:///./data/ci.db
+          SENTINEL_SESSION_COOKIE_SECURE: "false"
+          SENTINEL_SEED_DEMO_DATA: "false"
+        # Measured baseline = 79.6% (113 tests); threshold set just below it
+        # so CI fails on regressions without going red on harmless rounding.
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=79
+      - name: Alembic consistency
+        run: |
+          SENTINEL_APP_ENV=test SENTINEL_AUTH_SECRET=ci-test-secret \
+          SENTINEL_DATABASE_URL=sqlite:///./data/ci-alembic.db \
+          alembic upgrade head
+          SENTINEL_APP_ENV=test SENTINEL_AUTH_SECRET=ci-test-secret \
+          SENTINEL_DATABASE_URL=sqlite:///./data/ci-alembic.db \
+          alembic check

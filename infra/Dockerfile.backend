@@ -1,0 +1,41 @@
+# SentinelAI backend image.
+# Build context = repository root (docker compose builds with context: .).
+#
+# Layout inside the image mirrors the repo so `app.core.bootstrap`
+# (REPO_ROOT = <root>/backend/app/core, three levels up) finds the top-level
+# `ai` package:
+#   /srv/sentinelai/backend/   app + alembic
+#   /srv/sentinelai/ai/        domain library
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# System deps kept minimal: only what psycopg (Postgres driver) needs at runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /srv/sentinelai
+
+# Install the project (brings pinned deps from pyproject.toml with it).
+COPY backend/ ./backend/
+COPY ai/ ./ai/
+RUN pip install --no-cache-dir ./backend
+
+WORKDIR /srv/sentinelai/backend
+
+# Non-root user; /app/data was the old path — data dir lives under backend/data.
+RUN useradd --create-home --uid 10001 sentinel \
+    && mkdir -p /srv/sentinelai/backend/data \
+    && chown -R sentinel:sentinel /srv/sentinelai
+USER sentinel
+
+EXPOSE 8000
+
+# Schema: dev/test envs create tables at boot; production runs
+# `alembic upgrade head` explicitly (compose command does both).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,29 @@
+# SentinelAI frontend image.
+# Build context = repository root (docker compose builds with context: .).
+# Deliberately does NOT require Next `output: "standalone"` — runs `npm start`
+# with the node_modules produced by the deps stage.
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci || npm install
+
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ ./
+# Browser-reachable API base (backend published on the host at 8123).
+ARG NEXT_PUBLIC_API_URL=http://localhost:8123
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/.next ./.next
+COPY --from=build /app/public ./public
+EXPOSE 3000
+CMD ["npm", "start"]

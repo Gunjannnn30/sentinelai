@@ -1,0 +1,53 @@
+[project]
+name = "sentinelai-backend"
+version = "0.1.0"
+description = "SentinelAI — AI governance & security platform backend (gateway, guardrails, audit)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.6",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "sqlalchemy==2.0.36",
+    "alembic==1.14.0",
+    "httpx==0.28.1",
+    "itsdangerous==2.2.0",
+    "python-multipart==0.0.20",
+    "psycopg[binary]==3.2.3",
+    "redis==5.2.1",
+    "email-validator==2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+    "ruff==0.8.4",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008 is a false positive for FastAPI's dependency-injection idiom:
+# `Depends(...)` / `require_role(...)` in argument defaults is the
+# documented, intended pattern throughout this codebase.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# The test bootstrap pins SENTINEL_* env vars before the app is imported
+# (config reads the environment at import time), so imports cannot precede it.
+"tests/conftest.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

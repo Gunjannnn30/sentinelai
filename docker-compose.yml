@@ -1,0 +1,80 @@
+# SentinelAI local/PRE-PRODUCTION stack.
+#   docker compose up --build
+#   frontend  http://localhost:3000
+#   backend   http://localhost:8123  (API + /docs)
+#
+# Notes
+# - Postgres 16 + Redis 7 + backend + frontend.
+# - All SentinelAI settings use the SENTINEL_ env prefix; the compose file
+#   supplies safe LOCAL defaults. Rotate SENTINEL_AUTH_SECRET before any
+#   shared/staging deployment (see docs/DEPLOYMENT.md).
+# - Session cookies are issued with Secure=False here because compose serves
+#   plain HTTP; set SENTINEL_SESSION_COOKIE_SECURE=true behind TLS.
+# - `command: alembic upgrade head` applies the real schema before the API
+#   starts, so production-style migrations are exercised in this stack too.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.backend
+    environment:
+      SENTINEL_APP_ENV: development
+      SENTINEL_AUTH_SECRET: ${SENTINEL_AUTH_SECRET:-change-me-before-staging}
+      SENTINEL_DATABASE_URL: postgresql+psycopg://sentinel:sentinel@db:5432/sentinel
+      SENTINEL_REDIS_URL: redis://redis:6379/0
+      SENTINEL_SESSION_COOKIE_SECURE: "false"
+      SENTINEL_SEED_DEMO_DATA: "true"
+      SENTINEL_ALLOW_DEV_LOGIN: "false"
+      SENTINEL_LOG_LEVEL: INFO
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Apply migrations before serving (production-style boot).
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8123:8000"
+    volumes:
+      - backend_data:/app/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8123
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  redisdata:
+  backend_data:
