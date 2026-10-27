@@ -107,7 +107,7 @@ production topology. Controls referenced by name are described in
 
 ## 6. Verification evidence
 
-- `backend/tests/` (113 tests) covers: auth/CSRF/RBAC, tenant isolation,
+- `backend/tests/` (117 tests) covers: auth/CSRF/RBAC, tenant isolation,
   guardrail detections + masking, policy actions, fail-closed routing,
   provider error paths, audit chain + tamper detection, rate limits,
   validation envelopes.

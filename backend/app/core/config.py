@@ -75,6 +75,23 @@ class Settings(BaseSettings):
     def _upper_log_level(cls, v: str) -> str:
         return v.upper()
 
+    @field_validator("database_url")
+    @classmethod
+    def _pin_psycopg3(cls, v: str) -> str:
+        """Normalise Postgres URLs onto the psycopg v3 driver.
+
+        Every PaaS (Render, Railway, Cloud Run, Fly) hands out `postgresql://…`
+        connection strings. SQLAlchemy resolves a bare `postgresql://` to the
+        psycopg2 dialect, which is not in our dependency set, so the first
+        connection would fail with a missing-module error. We ship
+        `psycopg[binary]` v3 only, so pin the dialect explicitly here rather
+        than asking operators to rewrite the URL by hand.
+        """
+        for bare in ("postgres://", "postgresql://"):
+            if v.startswith(bare):
+                return "postgresql+psycopg://" + v.removeprefix(bare)
+        return v
+
     # ── derived ────────────────────────────────────────────────────────────
     @property
     def is_production(self) -> bool:

@@ -22,7 +22,7 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
       - name: Install
         run: pip install ".[dev]"
-      - name: Lint (ruff: backend + top-level ai package)
+      - name: "Lint (ruff: backend + top-level ai package)"
         run: ruff check . ../ai
       - name: Tests (pytest)
         env:
@@ -33,7 +33,7 @@ jobs:
           SENTINEL_DATABASE_URL: sqlite:///./data/ci.db
           SENTINEL_SESSION_COOKIE_SECURE: "false"
           SENTINEL_SEED_DEMO_DATA: "false"
-        # Measured baseline = 79.6% (114 tests); threshold set just below it
+        # Measured baseline = 79.7% (117 tests); threshold set just below it
         # so CI fails on regressions without going red on harmless rounding.
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=79
       - name: Alembic consistency

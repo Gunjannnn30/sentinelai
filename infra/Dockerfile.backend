@@ -33,9 +33,17 @@ USER sentinel
 
 EXPOSE 8000
 
-# Schema: dev/test envs create tables at boot; production runs
-# `alembic upgrade head` explicitly (compose command does both).
+# Schema: dev/test envs create tables at boot; in PRODUCTION `create_all` is
+# deliberately disabled and this `alembic upgrade head` is the ONLY thing that
+# creates tables — so migrations run at container start, exactly as
+# docker-compose already did. Single instance = safe.
+# If you scale to >1 replica, run migrations once per release out-of-band and
+# drop the `alembic upgrade head &&` prefix (see docs/DEPLOYMENT.md).
+#
+# ${PORT:-8000} — PaaS platforms (Render, Cloud Run, Railway, Fly) inject PORT
+# and refuse traffic on any other one. Compose sets no PORT, so it keeps 8000
+# (published on the host as 8123).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
-    CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/health" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

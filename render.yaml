@@ -1,0 +1,81 @@
+# Render Blueprint — deploy SentinelAI in one click.
+#
+#   Render dashboard → New → Blueprint → select this repo
+#
+# Creates three resources:
+#   sentinelai-api     web service, Docker (infra/Dockerfile.backend)
+#   sentinelai-web     web service, Docker (infra/Dockerfile.frontend)
+#   sentinelai         managed Postgres
+#
+# Both containers read $PORT (Render injects it); health checks, migrations and
+# the same-origin proxy are already wired — no code changes needed.
+#
+# BEFORE YOU RELY ON IT — free-tier caveats (current as of Oct 2026):
+#   * Free web services: 512 MB / 0.1 CPU, spin down after 15 min idle
+#     (~60 s to wake), drawn from 750 free instance-hours per workspace/month.
+#   * Free Postgres: 256 MB / 1 GB, **EXPIRES AFTER 30 DAYS**. Export with
+#     `pg_dump` before then, or move the service to a paid database.
+#   * No credit card required to start.
+#
+# If you want always-on, skip this file and use Option A in README §14 (VPS).
+
+services:
+  # ── API ─────────────────────────────────────────────────────────────────
+  - type: web
+    name: sentinelai-api
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.backend
+    dockerContext: .
+    plan: free
+    # /ready checks the database, so Render won't route traffic to an
+    # instance whose migrations or connection are broken.
+    healthCheckPath: /ready
+    envVars:
+      - key: SENTINEL_APP_ENV
+        value: production
+      # Generated once and stored by Render — never committed anywhere.
+      - key: SENTINEL_AUTH_SECRET
+        generateValue: true
+      # Render hands out a bare `postgresql://` URL; app/core/config.py pins it
+      # to the psycopg v3 driver we actually ship.
+      - key: SENTINEL_DATABASE_URL
+        fromDatabase:
+          name: sentinelai
+          property: connectionString
+      - key: SENTINEL_SESSION_COOKIE_SECURE
+        value: "true"
+      # Hard production posture — see README §8 and §14.1.
+      - key: SENTINEL_ALLOW_DEV_LOGIN
+        value: "false"
+      - key: SENTINEL_SEED_DEMO_DATA
+        value: "false"
+      - key: SENTINEL_STORE_PROMPT_CONTENT
+        value: "false"
+      - key: SENTINEL_LOG_LEVEL
+        value: INFO
+      # Left empty on purpose: run mock-only, or add these in the dashboard
+      # via Render's secret store for real OpenAI/Anthropic/Gemini calls.
+      - key: SENTINEL_OPENAI_API_KEY
+        sync: false
+
+  # ── Console ─────────────────────────────────────────────────────────────
+  - type: web
+    name: sentinelai-web
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.frontend
+    dockerContext: .
+    plan: free
+    healthCheckPath: /
+    envVars:
+      # Server-side rewrite target for next.config.ts — the browser only ever
+      # talks to this Next server, so there is no cross-origin call and the
+      # session/CSRF cookies stay first-party (the backend has no CORS).
+      # Set it to this API service's public URL, e.g.
+      #   https://sentinelai-api.onrender.com
+      # Render will prompt you for the exact value during blueprint setup.
+      - key: SENTINEL_API_ORIGIN
+        sync: false
+
+databases:
+  - name: sentinelai
+    plan: free
