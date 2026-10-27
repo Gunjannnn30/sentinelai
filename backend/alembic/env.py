@@ -31,6 +31,15 @@ if config.config_file_name is not None:
 # Point the URL at the app's configured database.
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
+# SQLite refuses to create a missing parent directory. app/db/session.py does
+# this mkdir at import time, but alembic never imports it — so on a fresh clone
+# (backend/data/ is gitignored) `alembic upgrade head` would fail with
+# "unable to open database file" before ever reaching a migration.
+if settings.is_sqlite:
+    _db_path = settings.database_url.split("///")[-1]
+    if _db_path and _db_path != ":memory:":
+        Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
+
 target_metadata = Base.metadata
 
 
