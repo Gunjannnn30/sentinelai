@@ -1,6 +1,7 @@
 name: frontend
 
 on:
+  workflow_dispatch:
   push:
     branches: [master, main]
     paths: ["frontend/**", ".github/workflows/frontend.yml"]
