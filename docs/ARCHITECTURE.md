@@ -149,10 +149,12 @@ POST /api/v1/chat/completions
 ## 7. Frontend ↔ backend contract
 
 - The browser calls **same-origin only** (`API_BASE = ""`): `/api/v1/...`,
-  `/health`, `/ready`, `/metrics`. The Next server rewrites those paths to the
-  backend (`SENTINEL_API_ORIGIN`, default `http://127.0.0.1:8123`), so the
-  page never talks to :8123 directly. Same `POST /api/v1/...` paths as
-  docs/API.md.
+  `/health`, `/ready`, `/metrics`. `frontend/middleware.ts` forwards those
+  paths to the backend (`SENTINEL_API_ORIGIN`, default `http://127.0.0.1:8123`,
+  read per request), so the page never talks to :8123 directly. Same
+  `POST /api/v1/...` paths as docs/API.md. The equivalent `rewrites()` block in
+  `next.config.ts` was removed: Next resolves those at **build** time, which
+  would make the proxy target a compile-time constant.
 - Why proxy instead of a direct browser call: the API is a different origin
   (3000 → 8123) and the backend ships **no CORS middleware by design**, so
   cross-origin calls are blocked. Proxying keeps the session + CSRF cookies

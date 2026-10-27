@@ -205,7 +205,8 @@ sentinelai/
 │   ├── components/              shadcn-style UI + feature components
 │   ├── lib/api.ts               fetch wrapper, CSRF, error envelope
 │   ├── e2e/governance.spec.ts   Playwright end-to-end flow
-│   └── next.config.ts           same-origin proxy rewrites (§7)
+│   ├── next.config.ts           intentionally empty: no build-time rewrites
+│   └── middleware.ts            same-origin proxy to the API (§7)
 │
 ├── docs/                      9 documents (§16)
 ├── infra/                     Dockerfile.backend, Dockerfile.frontend
@@ -282,10 +283,19 @@ npm run dev
 
 Open **http://localhost:3000**.
 
-The browser talks **only** to :3000. `next.config.ts` rewrites `/api/*`,
+The browser talks **only** to :3000. `frontend/middleware.ts` forwards `/api/*`,
 `/health`, `/ready` and `/metrics` to the backend (`SENTINEL_API_ORIGIN`,
 default `http://127.0.0.1:8123`), so nothing is cross-origin and the session
 cookies stay first-party. See [§7](#7-http-api) for why this matters.
+
+> It is `middleware.ts` and deliberately **not** `rewrites()` in
+> `next.config.ts`: Next evaluates `rewrites()` once during `next build` and
+> freezes the result into `.next/routes-manifest.json`, so anything it reads
+> from `process.env` is a build-time value. A Docker build stage that does not
+> have `SENTINEL_API_ORIGIN` silently bakes the `http://127.0.0.1:8123`
+> fallback into the image and every proxied path 500s at runtime. Middleware
+> runs per request in the serving process, so the variable is read when it is
+> actually used and can be changed without a rebuild.
 
 ### 5.3 One-shot script
 
@@ -441,7 +451,7 @@ app). Copy `.env.example` → `.env`. `SENTINEL_APP_ENV` accepts only
 | `SENTINEL_GEMINI_API_KEY` / `_BASE_URL` | empty / Google | |
 | `SENTINEL_OLLAMA_BASE_URL` | `http://localhost:11434` | Local models |
 | **Frontend** | | |
-| `SENTINEL_API_ORIGIN` | `http://127.0.0.1:8123` | **Server-side**: rewrite target for the proxy. Read when the Next server starts |
+| `SENTINEL_API_ORIGIN` | `http://127.0.0.1:8123` | **Server-side**: proxy target used by `frontend/middleware.ts`. Read from the environment **on every request**, so it can be changed without rebuilding the frontend. |
 | `NEXT_PUBLIC_API_URL` | *(unset)* | Leave unset. Only set if the backend sends permissive CORS |
 
 > **Never commit real keys.** `.env` is gitignored; providers are stored in the
@@ -589,7 +599,91 @@ and a production env preset.
 > config, and give you exact commands. I **cannot** create a cloud account,
 > enter a credit card, or sign into your provider — those need you. Options A
 > and B below are structured so your part is ~10 minutes of paste-able
-> commands.
+> commands. The one exception is a **Render API key**: given one, I can do the
+> entire deployment myself through the REST API — which is how the live URLs
+> below were created.
+
+---
+
+### Live deployment of this repository (Render, free tier)
+
+| | |
+|---|---|
+| **Console (browser entry point)** | https://sentinelai-web-xfsh.onrender.com |
+| **API (direct)** | https://sentinelai-api-ew0b.onrender.com |
+| **Readiness probe** | https://sentinelai-api-ew0b.onrender.com/ready |
+| **Database** | logical database `sentinelai` inside instance `nexa-db` (free, Oregon, PostgreSQL 18) |
+| **Render dashboard** | https://dashboard.render.com/d/dpg-dbg8faec6qcc73em0lm0-a |
+| **Source** | https://github.com/Gunjannnn30/sentinelai @ `master` |
+| **Region** | Oregon (`us-west`) |
+
+Open the console and sign in as the seeded demo org — `demo@sentinelai.dev` /
+`demo-password-123` — or register your own account from the login page.
+
+**Topology** is exactly [§7](#7-http-api): the browser only ever talks to the
+web service, and `frontend/middleware.ts` forwards `/api/*`, `/health`,
+`/ready` and `/metrics` to the API service. The API has no CORS middleware and
+remains a separate origin nobody calls directly.
+
+**How it was deployed** — scripted against `https://api.render.com/v1` with a
+personal API key, no dashboard clicks and no Blueprint:
+
+1. `GET /owners` → workspace id.
+2. **Database.** Render allows only **one active free-tier Postgres instance**
+   per workspace, and this workspace already had one (`nexa-db`, backing a
+   different live service). A second is refused with
+   `cannot have more than one active free tier database`. Rather than delete
+   another project's data or buy a plan, the deploy created an **isolated
+   logical database** in that instance: `CREATE DATABASE sentinelai` (the
+   default Render role has `CREATEDB`). A logical database has its own catalog
+   and schemas, so it cannot see or alter the other application's tables.
+3. `POST /services` twice with `serviceDetails.runtime=docker`, pointing at
+   `infra/Dockerfile.backend` (health check `/ready`) and
+   `infra/Dockerfile.frontend` (health check `/`), `plan: free`,
+   `region: oregon`, `dockerContext: .`.
+4. **Env vars** — set in the `envVars` body of `POST /services`, and via
+   `PUT /services/{id}/env-vars` on any later run (that endpoint *replaces*
+   the whole set, so it is not a merge). API: `SENTINEL_APP_ENV=production`,
+   `SENTINEL_AUTH_SECRET` (32 fresh random bytes), `SENTINEL_DATABASE_URL`
+   (the **external** connection string for `/sentinelai` — free tier has no
+   private networking), `SENTINEL_SESSION_COOKIE_SECURE=true`,
+   `SENTINEL_ALLOW_DEV_LOGIN=false`, `SENTINEL_SEED_DEMO_DATA=true`,
+   `SENTINEL_STORE_PROMPT_CONTENT=false`, `SENTINEL_LOG_LEVEL=INFO`. Web:
+   `SENTINEL_API_ORIGIN` = the API's public URL.
+5. `POST /services/{id}/deploys`, polled until `deploy.status == live`, then
+   probed `/ready` and the console for HTTP 200. Changing an env var does
+   **not** restart anything by itself — a deploy must be triggered explicitly.
+
+Schema came from Alembic only: the backend image runs `alembic upgrade head`
+on start, and `create_all` is disabled in the production lifespan.
+
+**Verified after the deploy:** `GET /ready` →
+`{"status":"ok","database":"ok",...}`; the console's `/ready` and
+`/api/v1/auth/me` return the API's own JSON through the proxy; login returns
+the session + CSRF cookies; and an unsafe request *without* `X-CSRF-Token`
+still fails with `403 csrf_failed`, because CSRF is enforced by the backend,
+not by the proxy.
+
+**Free-tier caveats, stated plainly:**
+
+- Free Postgres **expires after 30 days** (this one: 2026-11-26). Export your
+  data or move to a paid instance before then.
+- Both services **spin down after 15 minutes of idle**; the first request
+  afterwards takes roughly 60 s to wake them.
+- 512 MB RAM / 0.1 CPU per service.
+- `nexa-db` is shared infrastructure: SentinelAI's data is logically isolated,
+  but it lives in the same instance as another project. Give it its own
+  instance (delete it here and let the Blueprint below create `sentinelai`) if
+  you need real separation.
+- **Revoke the Render API key** you used for this (Account Settings → API
+  Keys) once you are satisfied.
+
+**Before treating this as real production:** set
+`SENTINEL_SEED_DEMO_DATA=false`, register your own owner account, and rotate
+`SENTINEL_AUTH_SECRET` (rotating it invalidates every existing session). See
+the [checklist](#141-production-checklist).
+
+---
 
 ### 14.0 Production environment (required in every option)
 

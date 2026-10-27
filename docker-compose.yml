@@ -68,7 +68,9 @@ services:
       context: .
       dockerfile: infra/Dockerfile.frontend
     environment:
-      # Private-network address of the API for next.config.ts rewrites().
+      # Private-network address of the API for frontend/middleware.ts.
+      # Runtime-only: middleware reads it per request, so this reaches the
+      # container without needing it during `docker build`.
       # The browser only ever talks to this Next server (same origin).
       SENTINEL_API_ORIGIN: http://backend:8000
     depends_on:

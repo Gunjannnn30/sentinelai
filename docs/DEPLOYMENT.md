@@ -52,12 +52,17 @@ Services: `db` (postgres:16-alpine, healthcheck), `redis` (redis:7-alpine),
    `create_all` is disabled in the production lifespan, so that step is load
    bearing. You can also run it explicitly: `./scripts/migrate.sh upgrade head`.
 5. **Topology: one public origin.** The browser only ever talks to the Next
-   server; `next.config.ts` rewrites `/api/*`, `/health`, `/ready`, `/metrics`
-   to the backend over the private network. So:
-   - Run `SENTINEL_API_ORIGIN` as a **server-side** env var on the frontend
-     service (build *and* runtime, because `rewrites()` is evaluated when the
-     Next server starts), e.g. `SENTINEL_API_ORIGIN=http://backend:8000`
-     inside Compose, or the API service's HTTPS URL on a PaaS.
+   server; `frontend/middleware.ts` forwards `/api/*`, `/health`, `/ready`
+   and `/metrics` to the backend over the private network. So:
+   - Run `SENTINEL_API_ORIGIN` as a **server-side, runtime-only** env var on
+     the frontend service. Middleware reads it on every request, so it needs no
+     build-time value, e.g. `SENTINEL_API_ORIGIN=http://backend:8000` inside
+     Compose, or the API service's HTTPS URL on a PaaS.
+     It is deliberately *not* read by `rewrites()` in `next.config.ts`: Next
+     evaluates those once during `next build` and freezes the result into
+     `.next/routes-manifest.json`, so a build without the variable (the normal
+     Docker case) bakes in the `http://127.0.0.1:8123` fallback and every
+     proxied path 500s at runtime.
    - Terminate HTTPS once, proxy to the frontend, forward `X-Request-ID`.
    - **Do not** set `NEXT_PUBLIC_API_URL` to an absolute origin. The backend
      ships no CORS middleware, so a direct browser→API call is cross-origin
@@ -65,8 +70,10 @@ Services: `db` (postgres:16-alpine, healthcheck), `redis` (redis:7-alpine),
    - Keep cookies `Secure` + `SameSite` appropriate for a single host;
      set `SENTINEL_SESSION_COOKIE_SECURE=true`.
 6. **Frontend build**: `docker build -f infra/Dockerfile.frontend .` —
-   `SENTINEL_API_ORIGIN` is read by the Next server at start (see step 5);
-   `NEXT_PUBLIC_*` vars would be inlined at build time, which is why the
+   `SENTINEL_API_ORIGIN` is **not** required at build time; `middleware.ts`
+   reads it when the server runs (see step 5). Only the runner stage's `ENV`
+   matters, and it can be overridden at run time without a rebuild.
+   `NEXT_PUBLIC_*` vars *would* be inlined at build time, which is why the
    proxy default (`API_BASE = ""`) is used instead.
 7. **Workers**: uvicorn single-process by default; if scaling replicas, put
    `SENTINEL_REDIS_URL` in place first (rate-limit counters become shared),

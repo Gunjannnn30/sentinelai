@@ -1,26 +1,14 @@
 import type { NextConfig } from "next";
 
-// Same-origin proxy: the browser talks only to this Next server, and the
-// Next server forwards /api, /health, /ready and /metrics to the backend.
+// The same-origin proxy (browser -> this Next server -> backend) lives in
+// `middleware.ts`, NOT in `rewrites()` here.
 //
-// Why proxy instead of calling http://127.0.0.1:8123 directly from the page:
-// the API is a different origin (port 3000 -> 8123), so a direct browser call
-// is cross-origin. The backend ships no CORS middleware by design, so those
-// calls would be blocked. Proxying keeps the session + CSRF cookies
-// first-party (no SameSite/Secure cross-site problems) and widens no attack
-// surface. The backend still enforces CSRF, body-size and auth server-side.
-const API_TARGET = process.env.SENTINEL_API_ORIGIN ?? "http://127.0.0.1:8123";
-
-const nextConfig: NextConfig = {
-  async rewrites() {
-    return [
-      // Order matters: more specific paths first.
-      { source: "/health", destination: `${API_TARGET}/health` },
-      { source: "/ready", destination: `${API_TARGET}/ready` },
-      { source: "/metrics", destination: `${API_TARGET}/metrics` },
-      { source: "/api/:path*", destination: `${API_TARGET}/api/:path*` },
-    ];
-  },
-};
+// `rewrites()` runs once during `next build` and its output is frozen into
+// `.next/routes-manifest.json`, so any `process.env.SENTINEL_API_ORIGIN` read
+// from it is a build-time value. Deploying with that approach silently baked
+// the `http://127.0.0.1:8123` fallback into the image (the Docker build stage
+// never has the variable) and every proxied path returned 500 at runtime.
+// middleware.ts reads the same variable per request instead.
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

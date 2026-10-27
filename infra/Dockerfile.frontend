@@ -16,9 +16,11 @@ RUN npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
-# Same-origin proxy target for rewrites(): browser -> this Next server ->
-# backend over the private network. Read at server start (not build time),
-# so it can be overridden at runtime with -e SENTINEL_API_ORIGIN=...
+# Same-origin proxy target for middleware.ts: browser -> this Next server ->
+# backend over the private network. middleware.ts reads process.env per
+# request, so this value is genuinely honoured at runtime and can be overridden
+# with -e SENTINEL_API_ORIGIN=... without a rebuild. (It is NOT used by
+# next.config.ts rewrites() any more -- those are frozen at build time.)
 # Do NOT bake a public API origin into the bundle: the backend ships no CORS
 # middleware, so direct browser->API calls would be blocked.
 ENV NODE_ENV=production \

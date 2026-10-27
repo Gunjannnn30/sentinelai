@@ -67,14 +67,24 @@ services:
     plan: free
     healthCheckPath: /
     envVars:
-      # Server-side rewrite target for next.config.ts — the browser only ever
-      # talks to this Next server, so there is no cross-origin call and the
-      # session/CSRF cookies stay first-party (the backend has no CORS).
+      # Runtime proxy target for frontend/middleware.ts — the browser only
+      # ever talks to this Next server, so there is no cross-origin call and
+      # the session/CSRF cookies stay first-party (the backend has no CORS).
+      # middleware.ts reads this per request, so the value is consumed at
+      # runtime and no build-time input is required.
       # Set it to this API service's public URL, e.g.
       #   https://sentinelai-api.onrender.com
       # Render will prompt you for the exact value during blueprint setup.
       - key: SENTINEL_API_ORIGIN
         sync: false
+
+# NOTE: Render allows only ONE active free-tier Postgres instance per
+# workspace. If your workspace already has one (check Dashboard -> Postgres),
+# DELETE the block below -- the Blueprint will otherwise fail with
+# "cannot have more than one active free tier database" -- and instead set
+# SENTINEL_DATABASE_URL yourself, pointing at a dedicated logical database
+# inside the existing instance (CREATE DATABASE sentinelai gives you an
+# isolated catalog with no visibility into, or risk to, the other app's data).
 
 databases:
   - name: sentinelai
