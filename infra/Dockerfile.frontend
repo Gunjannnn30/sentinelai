@@ -11,16 +11,19 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
-# Browser-reachable API base (backend published on the host at 8123).
-ARG NEXT_PUBLIC_API_URL=http://localhost:8123
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
-    NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
+# Same-origin proxy target for rewrites(): browser -> this Next server ->
+# backend over the private network. Read at server start (not build time),
+# so it can be overridden at runtime with -e SENTINEL_API_ORIGIN=...
+# Do NOT bake a public API origin into the bundle: the backend ships no CORS
+# middleware, so direct browser->API calls would be blocked.
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    SENTINEL_API_ORIGIN=http://backend:8000
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next

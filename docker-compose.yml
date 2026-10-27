@@ -61,14 +61,16 @@ services:
     ports:
       - "8123:8000"
     volumes:
-      - backend_data:/app/data
+      - backend_data:/srv/sentinelai/backend/data
 
   frontend:
     build:
       context: .
       dockerfile: infra/Dockerfile.frontend
-      args:
-        NEXT_PUBLIC_API_URL: http://localhost:8123
+    environment:
+      # Private-network address of the API for next.config.ts rewrites().
+      # The browser only ever talks to this Next server (same origin).
+      SENTINEL_API_ORIGIN: http://backend:8000
     depends_on:
       - backend
     ports:

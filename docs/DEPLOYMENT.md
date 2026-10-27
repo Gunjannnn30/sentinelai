@@ -49,12 +49,22 @@ Services: `db` (postgres:16-alpine, healthcheck), `redis` (redis:7-alpine),
 4. **Migrations** — schema in production comes **only** from Alembic:
    `./scripts/migrate.sh upgrade head` (compose already runs this in its
    `command`). Never rely on `create_all` (disabled in production lifespan).
-5. **Reverse proxy / TLS** — terminate HTTPS, proxy to the backend, forward
-   `X-Request-ID`, and set the frontend `NEXT_PUBLIC_API_URL` to the
-   **browser-reachable** API origin (build arg). Keep cookies Secure+SameSite.
-6. **Frontend build**: `docker build -f infra/Dockerfile.frontend --build-arg
-   NEXT_PUBLIC_API_URL=https://api.example.com .` — env vars prefixed
-   `NEXT_PUBLIC_*` are inlined at build time, not runtime.
+5. **Topology: one public origin.** The browser only ever talks to the Next
+   server; `next.config.ts` rewrites `/api/*`, `/health`, `/ready`, `/metrics`
+   to the backend over the private network. So:
+   - Run `SENTINEL_API_ORIGIN` as a **server-side** env var on the frontend
+     service (build *and* runtime, because `rewrites()` is evaluated when the
+     Next server starts), e.g. `SENTINEL_API_ORIGIN=http://backend:8123`.
+   - Terminate HTTPS once, proxy to the frontend, forward `X-Request-ID`.
+   - **Do not** set `NEXT_PUBLIC_API_URL` to an absolute origin. The backend
+     ships no CORS middleware, so a direct browser→API call is cross-origin
+     and will be blocked. Leave it unset to stay on the same-origin proxy.
+   - Keep cookies `Secure` + `SameSite` appropriate for a single host;
+     set `SENTINEL_SESSION_COOKIE_SECURE=true`.
+6. **Frontend build**: `docker build -f infra/Dockerfile.frontend .` —
+   `SENTINEL_API_ORIGIN` is read by the Next server at start (see step 5);
+   `NEXT_PUBLIC_*` vars would be inlined at build time, which is why the
+   proxy default (`API_BASE = ""`) is used instead.
 7. **Workers**: uvicorn single-process by default; if scaling replicas, put
    `SENTINEL_REDIS_URL` in place first (rate-limit counters become shared) and
    run migrations exactly once per release.
@@ -66,7 +76,7 @@ Services: `db` (postgres:16-alpine, healthcheck), `redis` (redis:7-alpine),
 | Step | Result |
 |---|---|
 | `ruff check . ../ai` | clean |
-| `pytest` (backend + ai) | **113 passed** (coverage of `app` = 79.6%) |
+| `pytest` (backend + ai) | **114 passed** (coverage of `app` = 79.6%) |
 | `alembic upgrade head` → `alembic current` → `alembic check` | head applied, "No new upgrade operations detected" |
 | Live uvicorn + `scripts/smoke.py` | **6/6 PASS** (register → success chat `demo=true` → blocked credential prompt → audit chain ok) |
 | Frontend gates | `tsc --noEmit` clean, `npm run lint` clean, `npm test` **26/26**, `next build` 15/15 routes |
@@ -82,7 +92,8 @@ same commands as above.
   Migrations in this repo are forward-only by convention; for a rollback,
   restore from backup (additive expand/contract migrations are the pattern for
   zero-downtime schema changes).
-- **Frontend**: rebuild with the right `NEXT_PUBLIC_API_URL`, rolling restart.
+- **Frontend**: rebuild and rolling restart (repoint `SENTINEL_API_ORIGIN` if
+  the backend address changed).
 - **DB backup**: `pg_dump -Fc` on a schedule (compose: run inside the `db`
   service); SQLite: stop the app and copy the file. Keep `audit/export`
   snapshots alongside backups as the tamper-detection anchor.
