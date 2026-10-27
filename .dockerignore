@@ -1,0 +1,51 @@
+# Docker build context.
+#
+# Only `backend/` and `ai/` are COPY'd by Dockerfile.backend, and only
+# `frontend/` by Dockerfile.frontend — but the whole repo is shipped as the
+# build context, so this list decides what the daemon sends and what lands
+# inside the image.
+#
+# Two entries here are load-bearing rather than cosmetic:
+#
+#   **/node_modules  Dockerfile.frontend's build stage does
+#                    `COPY frontend/ ./` AFTER `COPY --from=deps .../node_modules`.
+#                    Without this exclusion the host's node_modules (Windows
+#                    .node binaries on a Windows dev box) would silently
+#                    overwrite the Linux ones and `npm run build` would fail
+#                    at runtime with an architecture mismatch.
+#
+#   backend/data     a local dev SQLite DB (sentinelai.db + -wal + -shm)
+#                    must never be baked into a shipped image.
+#
+# .env is also excluded as belt-and-braces: no COPY statement reaches the repo
+# root, but secrets should not be inside the build context at all.
+
+.git
+.github
+
+# --- secrets / local state -------------------------------------------------
+.env
+.env.*
+!.env.example
+backend/data
+*.db
+*.db-wal
+*.db-shm
+
+# --- host-specific binaries and caches ------------------------------------
+**/node_modules
+**/.next
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+.venv
+venv
+
+# --- dev-only artifacts ----------------------------------------------------
+frontend/test-results
+frontend/playwright-report
+frontend/coverage
+docs
+scripts
