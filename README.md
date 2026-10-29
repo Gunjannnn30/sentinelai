@@ -725,9 +725,9 @@ Each piece does one job, and each free tier **never expires**:
 
 | Piece | Provider | URL | Free tier (verified Oct 2026) |
 |---|---|---|---|
-| **Database** | [Neon](https://neon.tech) (Postgres 16) | — (you hold the connection string) | No expiry. 0.5 GB storage, ~190 compute-hours/mo, **scales to zero** when idle |
+| **Database** | [Neon](https://neon.tech) (Postgres 18) | — (you hold the connection string) | No expiry. 0.5 GB storage, ~190 compute-hours/mo, **scales to zero** when idle |
 | **Backend API** | Render (web service, Docker) | https://sentinelai-api-ew0b.onrender.com | No expiry, but **spins down after 15 min idle** (~60 s to wake) |
-| **Frontend console** | Vercel (Hobby) | *(see the deploy notes below)* | No expiry. 100 GB bandwidth/mo |
+| **Frontend console** | Vercel (Hobby) | https://sentinelai-iota-swart.vercel.app | No expiry. 100 GB bandwidth/mo |
 | **Source** | GitHub | https://github.com/Gunjannnn30/sentinelai @ `master` | — |
 
 **Why three services and not one?** Because of one fact that quietly ruins
@@ -824,6 +824,10 @@ No code change is needed; Vercel reads `frontend/middleware.ts` at request time.
 5. When it finishes, Vercel gives you a URL like
    `https://sentinelai-xxxx.vercel.app`. Open it — the login page should load.
 
+> ✅ **This repository is already deployed.** The live console is
+> <https://sentinelai-iota-swart.vercel.app>. If you import the repo yourself
+> you will get your *own* URL in the same format.
+
 Leave `NEXT_PUBLIC_API_URL` **unset**. It is not read; the proxy reads
 `SENTINEL_API_ORIGIN` at request time, so you can repoint the backend later
 without rebuilding.
@@ -835,12 +839,30 @@ Run all four checks:
 | Check | URL | Expected |
 |---|---|---|
 | API direct | `https://sentinelai-api-ew0b.onrender.com/ready` | `"database": "ok"` |
-| Console loads | `https://<your-app>.vercel.app` | login page |
-| Proxy works | `https://<your-app>.vercel.app/ready` | the API's own JSON, forwarded |
-| CSRF still enforced | `curl -X POST https://<your-app>.vercel.app/api/v1/auth/login` | `403 csrf_failed` |
+| Console loads | https://sentinelai-iota-swart.vercel.app | login page |
+| Proxy works | https://sentinelai-iota-swart.vercel.app/ready | the API's own JSON, forwarded |
+| CSRF still enforced | see the three-line curl below | `403 csrf_failed` |
 
 That last one matters. CSRF protection lives in the **backend**, not in the
 proxy, so routing through Vercel cannot weaken it.
+
+Run it exactly — note that `POST /auth/login` is deliberately **exempt** from
+CSRF (you have no session cookie yet), so it returns `200` and hands you a
+`csrf_token`. The protection bites on every request *after* login:
+
+```bash
+# 1. Log in. Keep the cookies, capture the token it returns.
+curl -c jar.txt -s -X POST https://sentinelai-iota-swart.vercel.app/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@sentinelai.dev","password":"demo-password-123"}' | jq -r .csrf_token
+
+# 2. Try a state-changing call WITHOUT the token -> expect HTTP 403 csrf_failed
+curl -b jar.txt -s -X POST https://sentinelai-iota-swart.vercel.app/api/v1/auth/logout
+```
+
+If step 2 prints `"code": "csrf_failed"` you have confirmed the whole path:
+Vercel serving the app, the proxy forwarding to Render, Render reaching Neon,
+and the backend still refusing to act on an unauthenticated write.
 
 Then sign in as the seeded demo org — `demo@sentinelai.dev` /
 `demo-password-123` — or register your own account from the login page.
