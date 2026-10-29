@@ -29,7 +29,113 @@ anyone edited the log since?"* — this is that layer.
 
 ---
 
+## Start here — read this first if any of these words are unfamiliar
+
+**This section defines every term the rest of the README uses.** If you already
+know what an LLM, a gateway and a database are, skip to the
+[table of contents](#table-of-contents).
+
+### What this project is, in plain words
+
+Imagine you are adding a chat box to your website. The user types a question,
+your server sends it to an AI company (OpenAI, Anthropic, Google), and the AI's
+answer comes back. It works — until someone pastes their password into the
+chat box, or a customer's credit card number, or a prompt that tricks the model
+into ignoring its rules. Now your company has leaked a secret to a third party
+and you cannot prove what happened.
+
+**SentinelAI is the layer you put in the middle.** Your app talks to SentinelAI
+instead of talking to the AI company directly. SentinelAI then, for *every
+single request*:
+
+1. **Checks it** — looks for passwords, credit cards, social security numbers,
+   and attempts to trick the model.
+2. **Hides what it finds** — replaces secrets with `***` *before* anything
+   leaves your server, in a way that cannot be undone.
+3. **Decides** — applies your rules ("block anything with an SSN", "never let
+   the sales team use the expensive model") and either lets it through, warns,
+   or blocks it outright.
+4. **Picks a model** — chooses which AI actually answers, based on what the
+   task needs and what it costs.
+5. **Writes it down** — records every decision in a log that cannot be quietly
+   edited after the fact.
+
+If you have ever been asked *"who sent what, which rule allowed it, which model
+answered, what did it cost, and has anyone tampered with the log?"* — this is
+the component that answers all five.
+
+### The vocabulary, one term at a time
+
+| Term | What it actually means |
+|---|---|
+| **LLM** | *Large Language Model* — the AI itself, the thing that writes text. GPT, Claude and Gemini are LLMs. |
+| **Provider** | The company that sells you access to an LLM: OpenAI, Anthropic, Google. You send HTTP requests to their servers. |
+| **API** | *Application Programming Interface*. One program calling another over the internet. When this README says `POST /chat/completions`, that is an API endpoint — a specific URL that accepts a specific kind of request. |
+| **HTTP method** | `GET` = fetch something (never changes data). `POST` = create/submit. `PUT` = replace. `DELETE` = remove. Browsers also call these "unsafe methods" because they change state. |
+| **JSON** | The plain-text format APIs use to send structured data: `{"name": "Ada", "roles": ["admin"]}`. |
+| **Gateway** | A middleman server. Your application talks to it; it talks to the provider. SentinelAI is a gateway — it sits between you and the AI company. |
+| **Proxy** | A server that forwards a request on your behalf. Our frontend proxies API calls so the browser only ever talks to one address (see *CORS* below). |
+| **Prompt** | The text you send to the LLM. |
+| **Completion** | The text the LLM sends back. |
+| **Policy** | A rule written as *data* rather than as buried code — e.g. *"block any prompt containing an SSN"*. Stored as JSON, versioned, so you can see what rule was in force on any given day. |
+| **Guardrail** | An automatic safety check that runs before the model is called (and again on the way out). |
+| **PII** | *Personally Identifiable Information* — anything that identifies a real human: name, email, phone, SSN, credit card. Leaking it to a third party is a legal problem, not just an embarrassing one. |
+| **Mask** | Replacing a secret with `***`. SentinelAI's masking is **irreversible** — the original value never leaves your process, so there is nothing to leak. |
+| **Audit log** | A permanent written record of every action taken, kept so you can answer "what happened?" weeks later. |
+| **Hash chain** | Each log entry contains a fingerprint of the entry before it. Edit one entry and every entry after it no longer matches — so tampering *becomes detectable*, rather than merely being discouraged. |
+| **Multi-tenancy** | One installation serving many separate customers (tenants), each seeing **only their own data**. |
+| **Tenant / Org** | One customer organization inside the app. Everything is scoped to it. |
+| **Role** | A permission level: `owner` > `admin` > `developer` > `viewer`. Higher ranks can do more. |
+| **Session** | A signed cookie that tells the server "this browser is logged in as this person", so you don't retype your password on every click. |
+| **Cookie** | A small piece of data a website asks your browser to remember and send back automatically on every visit. |
+| **CSRF** | *Cross-Site Request Forgery* — an attack where a malicious website tricks your **already-logged-in** browser into sending a command to your app. Stopped by requiring a secret token the other site cannot read. |
+| **CORS** | *Cross-Origin Resource Sharing* — the browser rule that stops website A from reading website B's data. SentinelAI avoids the whole problem by proxying instead (see below). |
+| **SQLite** | A database that is just a single file on your disk. Zero setup — this is what local development uses. |
+| **PostgreSQL ("Postgres")** | A proper database *server*. Used in production. |
+| **Neon** | A company that hosts Postgres for you. Its free tier **never expires**, which is why this project uses it. |
+| **Migration** | A numbered, version-controlled list of database schema changes, applied in order so every environment ends up with the same tables. Handled by **Alembic**. |
+| **Alembic** | The tool that runs migrations for this project. |
+| **Docker / container** | A sealed box that packages your app together with everything it needs to run, so it behaves identically on your laptop and in the cloud. |
+| **Image** | The built, frozen contents of that box. |
+| **FastAPI** | The Python web framework the backend is written in. |
+| **Next.js / React** | The JavaScript framework behind the browser console you click around in. |
+| **TypeScript** | JavaScript with a type checker attached — catches whole classes of mistakes before the code runs. |
+| **Middleware** | Code that runs on *every* request **before** it reaches a page. Our API proxy lives here. |
+| **Free tier** | The free version of a cloud service, usually with limits (memory, hours, storage) — and sometimes an expiry date. |
+| **Free forever** | A free tier with **no expiry date**. Render's free *database* expires in 30 days; Neon's does not. That distinction is the entire reason for this project's deployment layout. |
+
+### The three numbers you will see constantly
+
+| Value | Meaning |
+|---|---|
+| **8123** | The backend's local port. (8000 is chosen instead by other tools on most machines, so this project uses 8123 everywhere — code, docs, scripts.) |
+| **3000** | The frontend's local port. |
+| **`SENTINEL_`** | Every backend setting is prefixed with this. A stray `DATABASE_URL` in your shell is deliberately ignored so it cannot hijack the app. |
+
+### The one architectural idea worth understanding before you read on
+
+The browser talks to **exactly one address**: the frontend. It never calls the
+backend directly. Instead, `frontend/middleware.ts` — running on the server,
+not in your browser — forwards API paths to the backend.
+
+```
+  your browser  ──▶  frontend (Next.js)  ──▶  backend (FastAPI)  ──▶  AI provider
+   one address         middleware.ts            guardrails,
+   one set of          forwards /api/*          policy, audit
+   cookies             to the backend
+```
+
+Why bother? Because the backend deliberately has **no CORS support**. If the
+browser called it directly, the browser would block the response. Proxying
+sidesteps that entirely, and keeps the login cookies on a single origin (which
+is also safer). Everything else in this README follows from that one decision.
+
+---
+
 ## Table of contents
+
+> **New to this?** Read [Start here](#start-here--read-this-first-if-any-of-these-words-are-unfamiliar)
+> first — it defines every term used below.
 
 1. [Why this exists](#1-why-this-exists)
 2. [What it actually does](#2-what-it-actually-does)
@@ -590,98 +696,182 @@ an **internal** address — so the browser still only talks to :3000.
 
 ## 14. Deploying live on the internet
 
-You need three things: **a database**, **somewhere to run the two containers**,
-and **a domain/TLS in front**. The app already ships everything required —
-Dockerfiles, Alembic migrations, `/health` + `/ready` + `/metrics` probes,
-and a production env preset.
+Putting this online needs three things, and this repository uses a different
+free provider for each — **on purpose**:
+
+| You need | Provider used here | Why this one |
+|---|---|---|
+| A **database** | Neon (Postgres) | Its free tier **never expires** |
+| Somewhere to run the **backend API** | Render | Runs Docker with no credit card |
+| Somewhere to serve the **frontend** | Vercel | Free static/Next.js hosting, no expiry |
+
+The app already ships everything required — a Dockerfile for the backend,
+Alembic migrations, `/health` + `/ready` + `/metrics` probes, a
+server-side proxy in `frontend/middleware.ts`, and a production env preset.
 
 > **What I can and cannot do for you.** I can push the code, write the
 > config, and give you exact commands. I **cannot** create a cloud account,
-> enter a credit card, or sign into your provider — those need you. Options A
-> and B below are structured so your part is ~10 minutes of paste-able
-> commands. The one exception is a **Render API key**: given one, I can do the
-> entire deployment myself through the REST API — which is how the live URLs
-> below were created.
+> enter a credit card, or sign into your provider — those need you. Steps 1–4
+> below are written so your part is ~10 minutes of paste-able clicks. The one
+> exception is a **Render API key**: given one, I can do the Render portion
+> myself through the REST API — which is how the live API URL below was
+> created.
 
 ---
 
-### Live deployment of this repository (Render, free tier)
+### The topology this repository targets: three free services
 
-| | |
-|---|---|
-| **Console (browser entry point)** | https://sentinelai-web-xfsh.onrender.com |
-| **API (direct)** | https://sentinelai-api-ew0b.onrender.com |
-| **Readiness probe** | https://sentinelai-api-ew0b.onrender.com/ready |
-| **Database** | logical database `sentinelai` inside instance `nexa-db` (free, Oregon, PostgreSQL 18) |
-| **Render dashboard** | https://dashboard.render.com/d/dpg-dbg8faec6qcc73em0lm0-a |
-| **Source** | https://github.com/Gunjannnn30/sentinelai @ `master` |
-| **Region** | Oregon (`us-west`) |
+Each piece does one job, and each free tier **never expires**:
 
-Open the console and sign in as the seeded demo org — `demo@sentinelai.dev` /
+| Piece | Provider | URL | Free tier (verified Oct 2026) |
+|---|---|---|---|
+| **Database** | [Neon](https://neon.tech) (Postgres 16) | — (you hold the connection string) | No expiry. 0.5 GB storage, ~190 compute-hours/mo, **scales to zero** when idle |
+| **Backend API** | Render (web service, Docker) | https://sentinelai-api-ew0b.onrender.com | No expiry, but **spins down after 15 min idle** (~60 s to wake) |
+| **Frontend console** | Vercel (Hobby) | *(see the deploy notes below)* | No expiry. 100 GB bandwidth/mo |
+| **Source** | GitHub | https://github.com/Gunjannnn30/sentinelai @ `master` | — |
+
+**Why three services and not one?** Because of one fact that quietly ruins
+"free forever" deployments: **Render's free Postgres expires after 30 days.**
+On 2026-11-26 the database backing the old all-Render layout stops existing,
+and the site with it. Neon's free Postgres has no such date. The app already
+spoke Postgres, so switching costs one connection string — no code change and
+no data-model migration.
+
+**Why the browser only ever talks to Vercel:** the frontend runs
+`frontend/middleware.ts` server-side on Vercel, forwarding `/api/*`,
+`/health`, `/ready` and `/metrics` to the Render API using the
+`SENTINEL_API_ORIGIN` environment variable. This is [§7](#7-http-api)'s proxy
+pattern, unchanged. It means the backend still needs no CORS, and the session
+and CSRF cookies stay first-party on the Vercel origin.
+
+> ⚠️ **Honest caveat.** Vercel's middleware has an execution time limit. On the
+> *first* request after the Render service has been asleep for a while (~60 s
+> wake), the proxy may time out. A second click succeeds. This is a free-tier
+> reality, not a bug in the code.
+
+---
+
+### Step 1 — Create the Neon database (~3 minutes, you)
+
+No credit card is required.
+
+1. Go to <https://neon.tech> and **Sign up** (GitHub sign-in works).
+2. On the welcome screen choose **Skip / build your own**, name the project
+   `sentinelai`, keep the region **Oregon (us-west-2)** so it sits beside the
+   Render API.
+3. Select the **Free** plan and press **Create project**.
+4. In the **Connection Details** dialog, switch the type to **Direct**
+   (host looks like `ep-xxxx-us-west-2.aws.neon.tech`).
+   **Do not use the `...-pooler` address** — that is PgBouncer, a connection
+   pooler that breaks Alembic migrations and psycopg's prepared statements
+   against a single long-running container like Render's.
+5. Copy the full URL. It looks like:
+   `postgres://neondb_owner:AbC123xyz@ep-xxxx-us-west-2.aws.neon.tech/neondb?sslmode=require`
+6. Paste it somewhere safe — you need it in Step 2. **This URL is a password.**
+   Anyone with it can read your database. Never commit it to GitHub.
+
+No backend code change is needed. `backend/app/core/config.py` already rewrites
+a bare `postgres://` URL onto the psycopg v3 driver that the project ships, so
+the string Neon gives you works as-is.
+
+### Step 2 — Point the Render API at Neon (~2 minutes, you)
+
+The backend service (`sentinelai-api`) already exists at
+https://sentinelai-api-ew0b.onrender.com. You are changing only its database
+environment variable.
+
+1. Open <https://dashboard.render.com> and sign in.
+2. In the left sidebar click **Blueprints** (or **Services**), find the
+   SentinelAI API service, and open it.
+3. Click **Environment** in the top tab bar.
+4. Find the row named `SENTINEL_DATABASE_URL`. Click it, clear whatever is
+   there, and paste your **Neon direct** URL from Step 1.
+5. Press **Save**. Render shows a banner: *changes are not applied until you
+   deploy.*
+6. Click **Manual Deploy** → **Clear build cache & deploy**. Wait for the
+   badge to turn **Live** (2–5 minutes on a cold build).
+
+Because `render.yaml` marks `SENTINEL_DATABASE_URL` as `sync: false`, the
+Blueprint deliberately does not touch it — the value you paste is the value
+that stays.
+
+**Verify the API before continuing.** Open
+<https://sentinelai-api-ew0b.onrender.com/ready>. You must see:
+
+```json
+{"status": "ok", "database": "ok", "version": "...", ...}
+```
+
+`"database": "ok"` is the signal that Alembic ran against the empty Neon
+database at container start and built the schema. If you see `database: "error"`
+instead, the connection string is wrong or you used the `-pooler` host.
+
+### Step 3 — Deploy the frontend on Vercel (~4 minutes, you)
+
+No code change is needed; Vercel reads `frontend/middleware.ts` at request time.
+
+1. Go to <https://vercel.com/new> and **import** the GitHub repository
+   `Gunjannnn30/sentinelai`.
+2. In the **Configure Project** screen, expand **Environment Variables** and add
+   exactly one:
+   - **Name:** `SENTINEL_API_ORIGIN`
+   - **Value:** `https://sentinelai-api-ew0b.onrender.com`
+3. Leave every other setting at its default. Vercel auto-detects Next.js and
+   reads the Root Directory from the repo (`frontend` is already configured as
+   the app directory in this project's setup — if the import screen asks for
+   a Root Directory, set it to `frontend`).
+4. Press **Deploy**. First build takes about 1–2 minutes.
+5. When it finishes, Vercel gives you a URL like
+   `https://sentinelai-xxxx.vercel.app`. Open it — the login page should load.
+
+Leave `NEXT_PUBLIC_API_URL` **unset**. It is not read; the proxy reads
+`SENTINEL_API_ORIGIN` at request time, so you can repoint the backend later
+without rebuilding.
+
+### Step 4 — Verify the whole path (~1 minute)
+
+Run all four checks:
+
+| Check | URL | Expected |
+|---|---|---|
+| API direct | `https://sentinelai-api-ew0b.onrender.com/ready` | `"database": "ok"` |
+| Console loads | `https://<your-app>.vercel.app` | login page |
+| Proxy works | `https://<your-app>.vercel.app/ready` | the API's own JSON, forwarded |
+| CSRF still enforced | `curl -X POST https://<your-app>.vercel.app/api/v1/auth/login` | `403 csrf_failed` |
+
+That last one matters. CSRF protection lives in the **backend**, not in the
+proxy, so routing through Vercel cannot weaken it.
+
+Then sign in as the seeded demo org — `demo@sentinelai.dev` /
 `demo-password-123` — or register your own account from the login page.
 
-**Topology** is exactly [§7](#7-http-api): the browser only ever talks to the
-web service, and `frontend/middleware.ts` forwards `/api/*`, `/health`,
-`/ready` and `/metrics` to the API service. The API has no CORS middleware and
-remains a separate origin nobody calls directly.
-
-**How it was deployed** — scripted against `https://api.render.com/v1` with a
-personal API key, no dashboard clicks and no Blueprint:
-
-1. `GET /owners` → workspace id.
-2. **Database.** Render allows only **one active free-tier Postgres instance**
-   per workspace, and this workspace already had one (`nexa-db`, backing a
-   different live service). A second is refused with
-   `cannot have more than one active free tier database`. Rather than delete
-   another project's data or buy a plan, the deploy created an **isolated
-   logical database** in that instance: `CREATE DATABASE sentinelai` (the
-   default Render role has `CREATEDB`). A logical database has its own catalog
-   and schemas, so it cannot see or alter the other application's tables.
-3. `POST /services` twice with `serviceDetails.runtime=docker`, pointing at
-   `infra/Dockerfile.backend` (health check `/ready`) and
-   `infra/Dockerfile.frontend` (health check `/`), `plan: free`,
-   `region: oregon`, `dockerContext: .`.
-4. **Env vars** — set in the `envVars` body of `POST /services`, and via
-   `PUT /services/{id}/env-vars` on any later run (that endpoint *replaces*
-   the whole set, so it is not a merge). API: `SENTINEL_APP_ENV=production`,
-   `SENTINEL_AUTH_SECRET` (32 fresh random bytes), `SENTINEL_DATABASE_URL`
-   (the **external** connection string for `/sentinelai` — free tier has no
-   private networking), `SENTINEL_SESSION_COOKIE_SECURE=true`,
-   `SENTINEL_ALLOW_DEV_LOGIN=false`, `SENTINEL_SEED_DEMO_DATA=true`,
-   `SENTINEL_STORE_PROMPT_CONTENT=false`, `SENTINEL_LOG_LEVEL=INFO`. Web:
-   `SENTINEL_API_ORIGIN` = the API's public URL.
-5. `POST /services/{id}/deploys`, polled until `deploy.status == live`, then
-   probed `/ready` and the console for HTTP 200. Changing an env var does
-   **not** restart anything by itself — a deploy must be triggered explicitly.
-
-Schema came from Alembic only: the backend image runs `alembic upgrade head`
-on start, and `create_all` is disabled in the production lifespan.
-
-**Verified after the deploy:** `GET /ready` →
-`{"status":"ok","database":"ok",...}`; the console's `/ready` and
-`/api/v1/auth/me` return the API's own JSON through the proxy; login returns
-the session + CSRF cookies; and an unsafe request *without* `X-CSRF-Token`
-still fails with `403 csrf_failed`, because CSRF is enforced by the backend,
-not by the proxy.
+**How the backend was provisioned** (for reference, not to repeat): scripted
+against `https://api.render.com/v1` with a personal API key — `GET /owners`
+for the workspace id, `POST /services` with `serviceDetails.runtime=docker`
+pointing at `infra/Dockerfile.backend` (health check `/ready`), then
+`PUT /services/{id}/env-vars` (note: that endpoint **replaces** the whole set,
+it does not merge) and an explicit `POST /services/{id}/deploys`, polled until
+`deploy.status == live`. Schema came from Alembic only — the backend image runs
+`alembic upgrade head` on start, and `create_all` is disabled in the production
+lifespan.
 
 **Free-tier caveats, stated plainly:**
 
-- Free Postgres **expires after 30 days** (this one: 2026-11-26). Export your
-  data or move to a paid instance before then.
-- Both services **spin down after 15 minutes of idle**; the first request
-  afterwards takes roughly 60 s to wake them.
-- 512 MB RAM / 0.1 CPU per service.
-- `nexa-db` is shared infrastructure: SentinelAI's data is logically isolated,
-  but it lives in the same instance as another project. Give it its own
-  instance (delete it here and let the Blueprint below create `sentinelai`) if
-  you need real separation.
-- **Revoke the Render API key** you used for this (Account Settings → API
-  Keys) once you are satisfied.
+- **Neon** compute **scales to zero** after ~5 minutes idle. The first query
+  after that takes 1–3 s. Storage never expires.
+- **Render** spins down after 15 min idle (~60 s to wake) and is limited to
+  512 MB RAM / 0.1 CPU. You get 750 free instance-hours per workspace per
+  month; exhaust them and free services suspend until the next calendar month.
+- **Vercel Hobby** caps bandwidth and function duration — see the middleware
+  timeout caveat above.
+- None of the three requires a credit card.
 
 **Before treating this as real production:** set
-`SENTINEL_SEED_DEMO_DATA=false`, register your own owner account, and rotate
-`SENTINEL_AUTH_SECRET` (rotating it invalidates every existing session). See
-the [checklist](#141-production-checklist).
+`SENTINEL_SEED_DEMO_DATA=false` on Render, register your own owner account,
+and rotate `SENTINEL_AUTH_SECRET` (rotating it invalidates every existing
+session). See the [checklist](#141-production-checklist). **Revoke any Render
+or Neon API key** you pasted into scripts once you are satisfied (Account
+Settings → API Keys).
 
 ---
 
@@ -780,41 +970,41 @@ alongside — they're your tamper-detection anchor.
 
 ---
 
-### Option B — Render.com (free, no server to manage) ← fastest
+### Option B — Render Blueprint for the API (free, no server to manage)
 
-Render is currently the only mainstream host that runs Docker on a **no-credit-card**
-free tier. A `render.yaml` blueprint ships in this repo, so setup is three steps:
+Render is currently the only mainstream host that runs Docker on a
+**no-credit-card** free tier. This repo's `render.yaml` is a Render Blueprint
+that now provisions **the API service only** — the database is external
+(Neon), because Render's free Postgres expires in 30 days. The live walkthrough
+is at the [top of §14](#the-topology-this-repository-targets-three-free-services).
 
-1. Push the repo to GitHub (see §15).
-2. Render dashboard → **New → Blueprint** → select the repo.
-3. Fill the two prompts it shows you:
-   - **`SENTINEL_API_ORIGIN`** → the API service's public URL,
-     e.g. `https://sentinelai-api.onrender.com`
-   - **`SENTINEL_OPENAI_API_KEY`** → leave blank to stay mock-only
+From a fresh Render account:
 
-Everything else is already specified: both Dockerfiles, the health check on
-`/ready`, `SENTINEL_AUTH_SECRET` (generated by Render, never committed),
-Postgres wiring, and the full production posture
-(`ALLOW_DEV_LOGIN=false`, `SEED_DEMO_DATA=false`, `SESSION_COOKIE_SECURE=true`).
+1. Create the Neon database (§14, Step 1) and copy its **direct** URL.
+2. Push the repo to GitHub.
+3. Render dashboard → **New → Blueprint** → select the repo.
+4. When prompted, paste your **Neon** URL for **`SENTINEL_DATABASE_URL`**
+   (it is `sync: false`, so Render will not generate one). Leave
+   **`SENTINEL_OPENAI_API_KEY`** blank to stay mock-only.
 
-Migrations run **inside the container at start** (`alembic upgrade head`, same
-as docker-compose), because production deliberately disables `create_all` —
-without it the API would boot against an empty database and fail `/ready`.
-Confirm after the first deploy that `/ready` reports `"database": "ok"`.
-If you ever scale the API past one replica, run migrations once per release
+Everything else is specified in the Blueprint: the backend Dockerfile, the
+health check on `/ready`, `SENTINEL_AUTH_SECRET` (generated by Render, never
+committed), and the full production posture
+(`ALLOW_DEV_LOGIN=false`, `SESSION_COOKIE_SECURE=true`).
+
+Migrations run **inside the container at start** (`alembic upgrade head`,
+same as docker-compose), because production deliberately disables `create_all`
+— without it the API would boot against an empty database and fail `/ready`.
+Confirm after the first deploy that `/ready` reports `"database": "ok"`. If you
+ever scale the API past one replica, run migrations once per release
 out-of-band instead of letting every instance run them.
 
-> ⚠️ **Free-tier caveats (verified Oct 2026) — read before relying on it:**
-> - Free web services are **512 MB / 0.1 CPU** and **spin down after 15 min**
->   of no traffic (~60 s to wake on the next visit).
-> - You get **750 free instance-hours per workspace per month**. Exhaust them
->   and free services suspend until the next calendar month.
-> - **Free Postgres expires after 30 days.** `pg_dump` before then, or upgrade
->   the database. This is the one that bites people.
-> - No credit card needed to start.
->
-> Good for a demo/portfolio deployment. For anything you need up 24/7, use
-> Option A.
+> ⚠️ **Free-tier caveats for the Render API (verified Oct 2026):**
+> - **512 MB / 0.1 CPU** and **spin down after 15 min** of no traffic
+>   (~60 s to wake on the next visit).
+> - **750 free instance-hours per workspace per month**. Exhaust them and free
+>   services suspend until the next calendar month.
+> - No credit card needed. The database is Neon's — see §14 for its caveats.
 
 ---
 

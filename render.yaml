@@ -1,23 +1,26 @@
-# Render Blueprint — deploy SentinelAI in one click.
+# Render Blueprint — deploy the SentinelAI backend in one click.
 #
 #   Render dashboard → New → Blueprint → select this repo
 #
-# Creates three resources:
+# Creates ONE resource:
 #   sentinelai-api     web service, Docker (infra/Dockerfile.backend)
-#   sentinelai-web     web service, Docker (infra/Dockerfile.frontend)
-#   sentinelai         managed Postgres
 #
-# Both containers read $PORT (Render injects it); health checks, migrations and
-# the same-origin proxy are already wired — no code changes needed.
+# The database is NOT on Render. It lives on **Neon** (free tier, never
+# expires) and the frontend lives on **Vercel** — see README §14. This file
+# deliberately provisions no `databases:` block:
+#
+#   * Render's free Postgres EXPIRES AFTER 30 DAYS, which silently kills a
+#     deployment you thought was permanent. Neon's free tier has no expiry.
+#   * Render allows only ONE active free-tier Postgres per workspace anyway,
+#     so a second project usually cannot provision one at all.
 #
 # BEFORE YOU RELY ON IT — free-tier caveats (current as of Oct 2026):
 #   * Free web services: 512 MB / 0.1 CPU, spin down after 15 min idle
 #     (~60 s to wake), drawn from 750 free instance-hours per workspace/month.
-#   * Free Postgres: 256 MB / 1 GB, **EXPIRES AFTER 30 DAYS**. Export with
-#     `pg_dump` before then, or move the service to a paid database.
 #   * No credit card required to start.
 #
-# If you want always-on, skip this file and use Option A in README §14 (VPS).
+# Local development is unaffected: `docker compose up` still spins its own
+# throwaway Postgres in a container, and plain `uvicorn` uses SQLite.
 
 services:
   # ── API ─────────────────────────────────────────────────────────────────
@@ -27,6 +30,7 @@ services:
     dockerfilePath: ./infra/Dockerfile.backend
     dockerContext: .
     plan: free
+    region: oregon
     # /ready checks the database, so Render won't route traffic to an
     # instance whose migrations or connection are broken.
     healthCheckPath: /ready
@@ -36,19 +40,30 @@ services:
       # Generated once and stored by Render — never committed anywhere.
       - key: SENTINEL_AUTH_SECRET
         generateValue: true
-      # Render hands out a bare `postgresql://` URL; app/core/config.py pins it
-      # to the psycopg v3 driver we actually ship.
+      # YOUR Neon connection string goes here. Paste it in the Render
+      # dashboard after the Blueprint finishes creating the service —
+      # it is marked `sync: false` so Blueprint creation never fails on a
+      # value only you can supply, and so Render never writes it to git.
+      #
+      # Use the DIRECT endpoint (host like `ep-xxx-aws.neon.tech`), NOT the
+      # pooled one (`ep-xxx-aws-pooler.neon.tech`). The pooler is PgBouncer in
+      # transaction mode, which breaks Alembic's migrations and psycopg3's
+      # prepared statements. A long-running uvicorn wants a direct connection.
+      #
+      # Neon hands out a bare `postgres://` URL; app/core/config.py pins it
+      # to the psycopg v3 driver we actually ship, so paste it as-is.
       - key: SENTINEL_DATABASE_URL
-        fromDatabase:
-          name: sentinelai
-          property: connectionString
+        sync: false
       - key: SENTINEL_SESSION_COOKIE_SECURE
         value: "true"
       # Hard production posture — see README §8 and §14.1.
       - key: SENTINEL_ALLOW_DEV_LOGIN
         value: "false"
+      # Flip to "true" only if you want the labelled demo org/user seeded on
+      # first boot so the console has something to show. Keep "false" for real
+      # production data.
       - key: SENTINEL_SEED_DEMO_DATA
-        value: "false"
+        value: "true"
       - key: SENTINEL_STORE_PROMPT_CONTENT
         value: "false"
       - key: SENTINEL_LOG_LEVEL
@@ -57,35 +72,3 @@ services:
       # via Render's secret store for real OpenAI/Anthropic/Gemini calls.
       - key: SENTINEL_OPENAI_API_KEY
         sync: false
-
-  # ── Console ─────────────────────────────────────────────────────────────
-  - type: web
-    name: sentinelai-web
-    runtime: docker
-    dockerfilePath: ./infra/Dockerfile.frontend
-    dockerContext: .
-    plan: free
-    healthCheckPath: /
-    envVars:
-      # Runtime proxy target for frontend/middleware.ts — the browser only
-      # ever talks to this Next server, so there is no cross-origin call and
-      # the session/CSRF cookies stay first-party (the backend has no CORS).
-      # middleware.ts reads this per request, so the value is consumed at
-      # runtime and no build-time input is required.
-      # Set it to this API service's public URL, e.g.
-      #   https://sentinelai-api.onrender.com
-      # Render will prompt you for the exact value during blueprint setup.
-      - key: SENTINEL_API_ORIGIN
-        sync: false
-
-# NOTE: Render allows only ONE active free-tier Postgres instance per
-# workspace. If your workspace already has one (check Dashboard -> Postgres),
-# DELETE the block below -- the Blueprint will otherwise fail with
-# "cannot have more than one active free tier database" -- and instead set
-# SENTINEL_DATABASE_URL yourself, pointing at a dedicated logical database
-# inside the existing instance (CREATE DATABASE sentinelai gives you an
-# isolated catalog with no visibility into, or risk to, the other app's data).
-
-databases:
-  - name: sentinelai
-    plan: free
