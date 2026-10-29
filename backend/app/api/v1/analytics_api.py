@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -277,7 +277,7 @@ def model_analytics(
     rows = db.execute(
         select(RequestRecord.model_key, RequestRecord.provider_kind,
                func.count(),
-               func.sum(func.case((RequestRecord.status == "error", 1), else_=0)),
+               func.sum(case((RequestRecord.status == "error", 1), else_=0)),
                func.avg(RequestRecord.latency_ms),
                func.coalesce(func.sum(RequestRecord.total_tokens), 0),
                func.sum(RequestRecord.estimated_cost_usd),
